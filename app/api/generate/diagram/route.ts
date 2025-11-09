@@ -89,42 +89,107 @@ function extractMermaidCode(rawResponse: string): string {
   cleanedDiagram = cleanedDiagram.trim()
   cleanedDiagram = cleanedDiagram.replace(/^\s*\n+/, '').trim()
 
-  // Remove trailing reasoning text
+  // CRITICAL: Remove any natural language before "flowchart"
+  // The AI sometimes puts text like "flowchart for their e-commerce..." 
+  // We need to find the actual "flowchart TD" or "flowchart LR" line
+  const flowchartPattern = /^(flowchart\s+(TD|LR|TB|BT|RL|LR))/i
   const lines = cleanedDiagram.split('\n')
-  const reasoningIndicators = [
-    /^[A-Z][a-z]+ [a-z]+/,
-    /^Features are/,
-    /^The user/,
-    /^This diagram/,
-    /^But maybe/,
-    /^Then /,
-    /^Looking at/,
-    /^flowchart showing/,
-  ]
-
-  let lastValidLine = -1
-
+  
+  // Find the first line that starts with valid flowchart syntax
+  let startIndex = -1
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (line &&
-        !line.includes('-->') &&
-        !line.includes('[') &&
-        !line.includes('(') &&
-        !line.includes('{') &&
-        !line.match(/^(flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|graph|subgraph|end)\s/i) &&
-        !line.match(/^[A-Za-z0-9_]+\[/) &&
-        !line.match(/^[A-Za-z0-9_]+\s*-->/) &&
-        reasoningIndicators.some(pattern => pattern.test(line))) {
-      lastValidLine = i - 1
+    if (flowchartPattern.test(lines[i].trim())) {
+      startIndex = i
       break
     }
   }
-
-  if (lastValidLine === -1) {
-    lastValidLine = lines.length - 1
+  
+  if (startIndex > 0) {
+    // Remove everything before the valid flowchart line
+    cleanedDiagram = lines.slice(startIndex).join('\n').trim()
+  } else if (startIndex === -1) {
+    // No valid flowchart found, try to fix common issues
+    // Look for lines containing "flowchart" and try to extract
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (line.toLowerCase().includes('flowchart')) {
+        // Try to extract just the flowchart part
+        const match = line.match(/(flowchart\s+(TD|LR|TB|BT|RL))/i)
+        if (match) {
+          // Replace the line with just the valid part
+          lines[i] = match[0]
+          cleanedDiagram = lines.slice(i).join('\n').trim()
+          break
+        }
+      }
+    }
   }
 
-  cleanedDiagram = lines.slice(0, lastValidLine + 1).join('\n').trim()
+  // Remove trailing reasoning text and filter out invalid lines
+  const reasoningIndicators = [
+    /^[A-Z][a-z]+ [a-z]+ [a-z]+/, // Natural language like "Looking at the..."
+    /^Features are/i,
+    /^The user/i,
+    /^This diagram/i,
+    /^These should/i,
+    /^But maybe/i,
+    /^Then /i,
+    /^Looking at/i,
+    /^First,/i,
+    /^The main/i,
+    /^The key/i,
+    /^I'll/i,
+    /^I will/i,
+    /^Note:/i,
+    /^Important:/i,
+  ]
+
+  const finalLines = cleanedDiagram.split('\n')
+  const validLines: string[] = []
+
+  for (let i = 0; i < finalLines.length; i++) {
+    const line = finalLines[i].trim()
+
+    // Skip empty lines (but preserve for formatting)
+    if (!line) {
+      validLines.push('')
+      continue
+    }
+
+    // Keep the flowchart declaration line
+    if (i === 0 && flowchartPattern.test(line)) {
+      validLines.push(line)
+      continue
+    }
+
+    // Check if this line is valid Mermaid syntax
+    const isValidMermaidLine =
+      line.includes('-->') || // Connection
+      line.includes('---') || // Connection variant
+      line.match(/^[A-Za-z0-9_]+\[/) || // Node definition
+      line.match(/^[A-Za-z0-9_]+\s*-->/) || // Node with connection
+      line.match(/^(subgraph|end)\s/i) || // Subgraph
+      line.match(/^style\s/i) || // Styling
+      line.match(/^class\s/i) || // Class definition
+      line.match(/^click\s/i) // Click event
+
+    // Check if this line is reasoning text
+    const isReasoningText = reasoningIndicators.some(pattern => pattern.test(line))
+
+    // Only add valid Mermaid lines, skip reasoning
+    if (isValidMermaidLine && !isReasoningText) {
+      validLines.push(line)
+    } else if (isReasoningText) {
+      console.log(`Filtered out reasoning text: "${line.substring(0, 50)}..."`)
+    }
+  }
+
+  cleanedDiagram = validLines.join('\n').trim()
+
+  // Final check: ensure it starts with valid flowchart syntax
+  if (!flowchartPattern.test(cleanedDiagram.split('\n')[0] || '')) {
+    throw new Error('Extracted code does not start with valid flowchart syntax')
+  }
 
   return cleanedDiagram
 }
@@ -149,86 +214,50 @@ export async function POST(request: NextRequest) {
 
     // Craft base prompt
     const previousContext = previousDiagram
-      ? `\n\nPREVIOUS DIAGRAM (expand and add more detail to this):\n${previousDiagram.mermaid}\n\n`
+      ? `\n\nPrevious diagram to expand:\n${previousDiagram.mermaid}\n`
       : ''
 
-    const analysisText = analysis.rawAnalysis || JSON.stringify(analysis, null, 2)
+    // Condense analysis to key points
+    const analysisSummary = analysis.rawAnalysis 
+      ? analysis.rawAnalysis.substring(0, 1000) + (analysis.rawAnalysis.length > 1000 ? '...' : '')
+      : `Product: ${analysis.productType || 'N/A'}\nFeatures: ${analysis.features?.join(', ') || 'N/A'}\nComponents: ${analysis.components?.join(', ') || 'N/A'}`
 
-    // Use few-shot prompting with concrete examples for consistency (research shows 35% → 100% improvement)
-    const basePrompt = `You are a UX designer creating Mermaid flowchart diagrams. You MUST follow the exact syntax patterns shown in the examples below.
+    const basePrompt = `You are a Mermaid flowchart code generator. Generate ONLY valid Mermaid flowchart syntax.
 
-PRODUCT ANALYSIS:
-${analysisText}
-
-Components: ${analysis.components?.join(', ') || 'N/A'}
-User Flow: ${analysis.userFlow || 'N/A'}
-Features: ${analysis.features?.join(', ') || 'N/A'}
-Product Type: ${analysis.productType || 'N/A'}
+PRODUCT INFO:
+${analysisSummary}
 ${previousContext}
 
-CRITICAL SYNTAX RULES:
-1. Every node MUST have an ID before the label: NodeID[Label]
-2. NEVER use standalone labels like [Label]
-3. Connections use --> between node IDs
-4. Start with "flowchart TD" or "flowchart LR"
-5. Use consistent node ID naming (camelCase or snake_case)
+STRICT OUTPUT FORMAT:
+1. First, write "===MERMAID_CODE===" on its own line
+2. On the VERY NEXT LINE, write exactly "flowchart TD" or "flowchart LR"
+3. Then write the flowchart nodes and connections
+4. Use ONLY valid Mermaid syntax - NO explanatory text, NO comments, NO reasoning
 
-CORRECT EXAMPLES TO FOLLOW:
+SYNTAX RULES:
+- Every node needs an ID: nodeId[Label Text]
+- Connect nodes with: nodeId1 --> nodeId2
+- Node IDs must be camelCase with no spaces
+- Labels go inside brackets: [Label Here]
 
-Example 1 - E-commerce App:
-flowchart TD
-    Start[User Opens App]
-    Start --> Browse[Browse Products]
-    Browse --> Select[Select Item]
-    Select --> AddCart[Add to Cart]
-    AddCart --> Checkout[Proceed to Checkout]
-    Checkout --> Payment[Enter Payment]
-    Payment --> Confirm[Order Confirmed]
-
-Example 2 - Login Flow:
-flowchart LR
-    Entry[Landing Page]
-    Entry --> Login[Login Screen]
-    Login --> Auth{Authentication}
-    Auth -->|Success| Dashboard[User Dashboard]
-    Auth -->|Failed| Error[Error Message]
-    Error --> Login
-
-Example 3 - Social Media App:
-flowchart TD
-    Home[Home Feed]
-    Home --> CreatePost[Create Post]
-    Home --> ViewProfile[View Profile]
-    CreatePost --> UploadMedia[Upload Photo/Video]
-    UploadMedia --> AddCaption[Add Caption]
-    AddCaption --> PublishPost[Publish]
-    ViewProfile --> EditProfile[Edit Profile]
-    ViewProfile --> ViewPosts[View Posts]
-
-COMMON MISTAKES TO AVOID:
-❌ WRONG: [Customer] --> [Shopping Cart]
-✓ CORRECT: Customer[Customer] --> Cart[Shopping Cart]
-
-❌ WRONG: flowchart TD
-         [Start]
-✓ CORRECT: flowchart TD
-          Start[Start]
-
-❌ WRONG: Node1 --> [Label]
-✓ CORRECT: Node1[First] --> Node2[Label]
-
-YOUR TASK:
-Analyze the product above and create a similar diagram following the EXACT syntax pattern from the examples.
-
-Think step by step:
-1. What are the main user actions?
-2. What is the logical flow?
-3. What are the decision points?
-
-Then output ONLY the Mermaid code after the delimiter.
-
+CORRECT EXAMPLE:
 ===MERMAID_CODE===
-[Output your flowchart here using the exact syntax from examples]`
+flowchart TD
+    start[User Opens App]
+    browse[Browse Products]
+    select[Select Item]
+    checkout[Checkout Process]
+    start --> browse
+    browse --> select
+    select --> checkout
+
+WRONG - DO NOT DO THIS:
+===MERMAID_CODE===
+flowchart TD
+Looking at the features, we need...
+First, the user starts by...
+
+Generate the flowchart now. Output MUST start with ===MERMAID_CODE=== followed by flowchart TD on the next line:`
 
     // Retry loop with validation
     let cleanedDiagram = ''

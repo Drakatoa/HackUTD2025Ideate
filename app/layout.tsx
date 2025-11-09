@@ -2,6 +2,7 @@ import type React from "react"
 import type { Metadata } from "next"
 import { Inter, Merriweather } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
+import { Toaster } from "@/components/ui/sonner"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
@@ -12,25 +13,20 @@ const merriweather = Merriweather({
 })
 
 export const metadata: Metadata = {
-  title: "AID8 — Automated Ideation Mate",
+  title: "Ideate — Automated Ideation Mate",
   description: "Turn your sketches into stories, your ideas into worlds",
   generator: "v0.app",
   icons: {
     icon: [
       {
-        url: "/icon-light-32x32.png",
-        media: "(prefers-color-scheme: light)",
+        url: "/ideate-icon.png",
       },
       {
-        url: "/icon-dark-32x32.png",
-        media: "(prefers-color-scheme: dark)",
-      },
-      {
-        url: "/icon.svg",
-        type: "image/svg+xml",
+        url: "/ideate-icon.png",
+        type: "image/png",
       },
     ],
-    apple: "/apple-icon.png",
+    apple: "/ideate-icon.png",
   },
 }
 
@@ -44,6 +40,7 @@ export default function RootLayout({
       <body className={`${inter.variable} ${merriweather.variable} font-sans antialiased`}>
         {children}
         <Analytics />
+        <Toaster />
       </body>
     </html>
   )

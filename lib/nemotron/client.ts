@@ -38,8 +38,8 @@ export class NemotronClient {
 
     // Create axios instance with default config
     // Ensure baseURL doesn't have trailing slash
-    const baseURL = this.config.apiUrl.replace(/\/$/, '').replace(/\/v1$/, '') // Remove trailing slash and /v1 if present
-    
+    const baseURL = this.config.apiUrl.replace(/\/$/, '') // Remove only trailing slash, keep /v1 if present
+
     this.axiosInstance = axios.create({
       baseURL: baseURL,
       timeout: this.config.timeout,
@@ -107,20 +107,17 @@ export class NemotronClient {
     try {
       // NVIDIA API might use model-specific endpoints
       // Try different endpoint formats:
-      // 1. /v1/chat/completions (standard OpenAI format)
-      // 2. /v1/models/{model}/chat/completions (model-specific)
-      // 3. /chat/completions (if baseURL has /v1)
-      
-      let endpoint = '/v1/chat/completions'
-      
-      // If baseURL already includes /v1, use /chat/completions instead
-      if (this.axiosInstance.defaults.baseURL?.includes('/v1')) {
-        endpoint = '/chat/completions'
+      // 1. /chat/completions (if baseURL already has /v1)
+      // 2. /v1/chat/completions (standard OpenAI format)
+
+      let endpoint = '/chat/completions'
+      let modelSpecificEndpoint = `/models/${encodeURIComponent(modelId)}/chat/completions`
+
+      // If baseURL doesn't include /v1, add it to endpoints
+      if (!this.axiosInstance.defaults.baseURL?.includes('/v1')) {
+        endpoint = '/v1/chat/completions'
+        modelSpecificEndpoint = `/v1/models/${encodeURIComponent(modelId)}/chat/completions`
       }
-      
-      // Try model-specific endpoint format
-      // Some NVIDIA APIs use: /v1/models/{model_id}/chat/completions
-      const modelSpecificEndpoint = `/v1/models/${encodeURIComponent(modelId)}/chat/completions`
       
       const fullUrl = `${this.axiosInstance.defaults.baseURL}${endpoint}`
       const modelSpecificUrl = `${this.axiosInstance.defaults.baseURL}${modelSpecificEndpoint}`
@@ -132,12 +129,16 @@ export class NemotronClient {
         modelSpecificEndpoint,
         modelSpecificUrl,
         model: modelId,
+        baseURLIncludesV1: this.axiosInstance.defaults.baseURL?.includes('/v1'),
         requestBody: {
           model: modelId,
           messages: messages.length,
           max_tokens: request.max_tokens,
         },
       })
+
+      console.log('Will try endpoint:', endpoint)
+      console.log('Full URL will be:', fullUrl)
 
       // Try standard endpoint first
       let response: any

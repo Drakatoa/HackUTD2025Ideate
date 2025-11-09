@@ -30,10 +30,14 @@ import {
   Edit2,
   RefreshCw,
   X,
+  FolderOpen,
 } from "lucide-react"
 import { getStroke } from "perfect-freehand"
 import mermaid from "mermaid"
 import type { AnalysisResult, DiagramGenerationResult, PitchResult, CompetitiveAnalysisResult } from "@/lib/nemotron/types"
+import { AuthButton } from "@/components/auth-button"
+import { CanvasLibrary } from "@/components/canvas-library"
+import { toast } from "sonner"
 
 type Tool = "select" | "pencil" | "rectangle" | "circle" | "text" | "sticky" | "eraser"
 
@@ -137,6 +141,70 @@ export default function WhiteboardPage() {
   ]
 
   useEffect(() => {
+    // Helper function to load canvas from database
+    const loadCanvasFromDatabase = (canvasId: string, showToast = true) => {
+      return fetch(`/api/canvas/load?id=${canvasId}`)
+        .then((res) => {
+          if (!res.ok) {
+            return res.json().then(err => {
+              throw new Error(err.error || 'Failed to load canvas')
+            })
+          }
+          return res.json()
+        })
+        .then((data) => {
+          if (data.canvas && data.canvas.elements) {
+            setElements(data.canvas.elements)
+            // Restore AI content
+            if (data.canvas.description) setDescription(data.canvas.description)
+            if (data.canvas.analysis) setAnalysis(data.canvas.analysis)
+            if (data.canvas.diagram) setDiagram(data.canvas.diagram)
+            if (data.canvas.diagram_iterations) setDiagramIterations(data.canvas.diagram_iterations)
+            if (data.canvas.pitch) setPitch(data.canvas.pitch)
+            if (data.canvas.competitive) setCompetitive(data.canvas.competitive)
+            if (data.canvas.roadmap) setRoadmap(data.canvas.roadmap)
+            // Store canvas ID and name for resaving
+            sessionStorage.setItem('currentCanvasId', data.canvas.id)
+            sessionStorage.setItem('currentCanvasName', data.canvas.name)
+            if (showToast) {
+              toast.success(`Canvas "${data.canvas.name}" loaded!`)
+            }
+          } else {
+            throw new Error('Canvas data is missing')
+          }
+        })
+        .catch((error) => {
+          console.error('Error loading canvas:', error)
+          toast.error('Failed to load canvas', { description: error.message })
+          // Clear invalid canvas ID from sessionStorage
+          sessionStorage.removeItem('currentCanvasId')
+          sessionStorage.removeItem('currentCanvasName')
+        })
+    }
+
+    // Check if we need to load a canvas from gallery
+    const loadCanvasId = sessionStorage.getItem('loadCanvasId')
+    if (loadCanvasId) {
+      sessionStorage.removeItem('loadCanvasId')
+      loadCanvasFromDatabase(loadCanvasId, true)
+      return // Don't load from localStorage if loading from database
+    }
+
+    // Check if we have a current canvas ID (user navigated back to whiteboard)
+    const currentCanvasId = sessionStorage.getItem('currentCanvasId')
+    if (currentCanvasId) {
+      // Reload the last canvas from database instead of localStorage
+      loadCanvasFromDatabase(currentCanvasId, false)
+      return // Don't load from localStorage if loading from database
+    }
+
+    // Clear current canvas info if starting fresh (not loading from database)
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('currentCanvasId')
+      sessionStorage.removeItem('currentCanvasName')
+    }
+
+    // Otherwise, load from localStorage
     const savedElements = localStorage.getItem("aid8-whiteboard-elements")
     const savedHistory = localStorage.getItem("aid8-whiteboard-history")
     const savedHistoryStep = localStorage.getItem("aid8-whiteboard-history-step")
@@ -1151,28 +1219,44 @@ export default function WhiteboardPage() {
   }, [])
 
   // Helper function to render Mermaid diagram
-  const renderMermaidDiagram = (container: HTMLDivElement, mermaidCode: string, diagramId: string) => {
-    container.innerHTML = ""
-    const pre = document.createElement("pre")
-    pre.className = "mermaid"
-    pre.id = diagramId
-    pre.textContent = mermaidCode
-    container.appendChild(pre)
+  const renderMermaidDiagram = async (container: HTMLDivElement, mermaidCode: string, diagramId: string) => {
+    try {
+      // Clear container
+      container.innerHTML = ""
 
-    mermaid
-      .run({
+      // Create pre element with mermaid class
+      const pre = document.createElement("pre")
+      pre.className = "mermaid"
+      pre.id = diagramId
+      pre.textContent = mermaidCode
+
+      // Append to DOM BEFORE calling mermaid.run()
+      // This is critical - the element must be in the DOM tree
+      container.appendChild(pre)
+
+      // Force a reflow to ensure DOM is ready
+      void container.offsetHeight
+
+      // Run mermaid with error suppression and await the promise
+      await mermaid.run({
         nodes: [pre],
+        suppressErrors: false, // We want to catch errors ourselves
       })
-      .catch((error) => {
-        console.error("Mermaid rendering error:", error)
-        console.error("Failed diagram code:", mermaidCode)
-        container.innerHTML = `<div class="text-sm text-muted-foreground p-4">
-          <p class="font-semibold mb-2">Diagram rendering error:</p>
-          <p class="text-xs mb-2">${error.message || 'Unknown error'}</p>
-          <p class="text-xs font-semibold mt-3">Raw Mermaid code:</p>
-          <pre class="mt-2 text-xs overflow-auto whitespace-pre-wrap bg-background/50 p-2 rounded">${mermaidCode}</pre>
-        </div>`
-      })
+
+      console.log("Mermaid diagram rendered successfully:", diagramId)
+    } catch (error: any) {
+      console.error("Mermaid rendering error:", error)
+      console.error("Failed diagram code:", mermaidCode)
+      console.error("Error stack:", error.stack)
+
+      // Display error message to user
+      container.innerHTML = `<div class="text-sm text-muted-foreground p-4">
+        <p class="font-semibold mb-2">Diagram rendering error:</p>
+        <p class="text-xs mb-2">${error.message || 'Unknown error'}</p>
+        <p class="text-xs font-semibold mt-3">Raw Mermaid code:</p>
+        <pre class="mt-2 text-xs overflow-auto whitespace-pre-wrap bg-background/50 p-2 rounded">${mermaidCode}</pre>
+      </div>`
+    }
   }
 
   // Render Mermaid diagram when diagram or current index changes
@@ -1212,27 +1296,40 @@ export default function WhiteboardPage() {
 
   // Render iteration diagrams
   useEffect(() => {
-    diagramIterations.forEach((iter, idx) => {
-      const container = iterationRefs.current.get(idx)
-      if (container && iter.mermaid) {
-        const id = `mermaid-iter-${idx}-${Date.now()}`
-        container.innerHTML = ""
-        const pre = document.createElement("pre")
-        pre.className = "mermaid"
-        pre.id = id
-        pre.textContent = iter.mermaid
-        container.appendChild(pre)
+    const renderIterations = async () => {
+      for (const [idx, iter] of diagramIterations.entries()) {
+        const container = iterationRefs.current.get(idx)
+        if (container && iter.mermaid) {
+          try {
+            const id = `mermaid-iter-${idx}-${Date.now()}`
+            container.innerHTML = ""
+            const pre = document.createElement("pre")
+            pre.className = "mermaid"
+            pre.id = id
+            pre.textContent = iter.mermaid
 
-        mermaid
-          .run({
-            nodes: [pre],
-          })
-          .catch((error) => {
+            // Append to DOM first
+            container.appendChild(pre)
+
+            // Force reflow
+            void container.offsetHeight
+
+            // Render with mermaid
+            await mermaid.run({
+              nodes: [pre],
+              suppressErrors: false,
+            })
+          } catch (error) {
             console.error("Mermaid iteration rendering error:", error)
-            container.innerHTML = `<div class="text-xs text-muted-foreground p-2">Diagram rendering error</div>`
-          })
+            if (container) {
+              container.innerHTML = `<div class="text-xs text-muted-foreground p-2">Diagram rendering error</div>`
+            }
+          }
+        }
       }
-    })
+    }
+
+    renderIterations()
   }, [diagramIterations])
 
   const handleExportCanvas = () => {
@@ -2172,8 +2269,7 @@ export default function WhiteboardPage() {
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <Link href="/" className="flex items-center gap-2">
-              <Sparkles className="w-6 h-6 text-secondary" />
-              <h1 className="text-2xl font-serif font-bold text-foreground">AID8</h1>
+              <img src="/ideate-logo.png" alt="Ideate" className="h-12 w-auto" />
             </Link>
             <div className="flex items-center gap-3">
               <Link href="/">
@@ -2183,11 +2279,36 @@ export default function WhiteboardPage() {
                 </Button>
               </Link>
               <Link href="/gallery">
-                <Button variant="outline" size="sm">
-                  <Save className="w-4 h-4 mr-2" />
-                  Save to Grimoire
+                <Button variant="ghost" size="sm">
+                  <FolderOpen className="w-4 h-4 mr-2" />
+                  My Grimoire
                 </Button>
               </Link>
+              <div className="flex items-center gap-2">
+                <CanvasLibrary 
+                  elements={elements} 
+                  onLoad={(data) => {
+                    setElements(data.elements)
+                    if (data.description) setDescription(data.description)
+                    if (data.analysis) setAnalysis(data.analysis)
+                    if (data.diagram) setDiagram(data.diagram)
+                    if (data.diagramIterations) setDiagramIterations(data.diagramIterations)
+                    if (data.pitch) setPitch(data.pitch)
+                    if (data.competitive) setCompetitive(data.competitive)
+                    if (data.roadmap) setRoadmap(data.roadmap)
+                  }}
+                  description={description}
+                  analysis={analysis}
+                  diagram={diagram}
+                  diagramIterations={diagramIterations}
+                  pitch={pitch}
+                  competitive={competitive}
+                  roadmap={roadmap}
+                  currentCanvasId={typeof window !== 'undefined' ? sessionStorage.getItem('currentCanvasId') : null}
+                  currentCanvasName={typeof window !== 'undefined' ? sessionStorage.getItem('currentCanvasName') : null}
+                />
+                <AuthButton />
+              </div>
             </div>
           </div>
         </div>

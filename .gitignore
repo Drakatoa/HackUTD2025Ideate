@@ -27,10 +27,13 @@ yarn-error.log*
 next-env.d.ts
 
 # documentation/guides (instructional markdown files)
-*_SETUP*.md
-*_INTEGRATION*.md
-*_MODEL*.md
-*_STRUCTURE*.md
-*_COMPLETE*.md
-ENV_SETUP_INSTRUCTIONS.md
-FRONTEND_STRUCTURE_AND_TECH_STACK.md
+# Ignore all .md files except README files
+*.md
+!README.md
+!readme.md
+!**/README.md
+!**/readme.md
+
+# Claude AI files
+.claude
+/.claude
