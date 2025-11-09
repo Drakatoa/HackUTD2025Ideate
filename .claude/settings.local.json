@@ -9,7 +9,8 @@
       "Bash(python:*)",
       "Bash(node test-analyze.js:*)",
       "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Host ''All node processes killed''\")",
-      "Bash(node test-diagram.js:*)"
+      "Bash(node test-diagram.js:*)",
+      "Bash(node -e:*)"
     ],
     "deny": [],
     "ask": []

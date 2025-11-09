@@ -50,6 +50,7 @@ interface DrawnElement {
   imageSrc?: string
   originalWidth?: number
   originalHeight?: number
+  fontSize?: number
 }
 
 interface TextInput {
@@ -65,7 +66,7 @@ interface TextInput {
 
 export default function WhiteboardPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [tool, setTool] = useState<Tool>("pencil")
+  const [tool, setTool] = useState<Tool>("select")
   const [isDrawing, setIsDrawing] = useState(false)
   const [elements, setElements] = useState<DrawnElement[]>([])
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([])
@@ -85,6 +86,8 @@ export default function WhiteboardPage() {
   } | null>(null)
 
   const [activeTextInput, setActiveTextInput] = useState<TextInput | null>(null)
+  const [editingElement, setEditingElement] = useState<DrawnElement | null>(null) // Store original element when editing
+  const [lastClick, setLastClick] = useState<{ time: number; elementId: string | null } | null>(null) // Track clicks for double-click detection
 
   const [selectedElement, setSelectedElement] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
@@ -92,7 +95,7 @@ export default function WhiteboardPage() {
   const [hasInteracted, setHasInteracted] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [resizeHandle, setResizeHandle] = useState<"nw" | "ne" | "sw" | "se" | null>(null)
-  const [resizeStart, setResizeStart] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const [resizeStart, setResizeStart] = useState<{ x: number; y: number; width: number; height: number; fontSize?: number; mouseX?: number; mouseY?: number } | null>(null)
 
   // AI Generation State
   const [description, setDescription] = useState("")
@@ -216,30 +219,156 @@ export default function WhiteboardPage() {
     } else if (element.type === "sticky" && element.x && element.y) {
       return x >= element.x && x <= element.x + 180 && y >= element.y && y <= element.y + 180
     } else if (element.type === "text" && element.x && element.y && element.text && ctx) {
-      ctx.font = "bold 18px Inter"
+      const fontSize = element.fontSize || 18
+      ctx.font = `bold ${fontSize}px Inter`
       const metrics = ctx.measureText(element.text)
-      return x >= element.x && x <= element.x + metrics.width && y >= element.y - 18 && y <= element.y
+      return x >= element.x && x <= element.x + metrics.width && y >= element.y - fontSize && y <= element.y
     } else if (element.type === "image" && element.x !== undefined && element.y !== undefined && element.width && element.height) {
       return x >= element.x && x <= element.x + element.width && y >= element.y && y <= element.y + element.height
     }
     return false
   }
 
-  const getResizeHandle = (x: number, y: number, element: DrawnElement): "nw" | "ne" | "sw" | "se" | null => {
-    if (element.type !== "image" || element.x === undefined || element.y === undefined || !element.width || !element.height) {
+  // Helper function to draw resize handles
+  const drawResizeHandles = (ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number) => {
+    const handleSize = 20 // Larger visual handles for better visibility and easier grabbing
+    const handles = [
+      { x: x, y: y }, // NW
+      { x: x + width, y: y }, // NE
+      { x: x, y: y + height }, // SW
+      { x: x + width, y: y + height }, // SE
+    ]
+
+    // Draw handles with better visibility
+    handles.forEach((handle) => {
+      // Outer white ring for contrast
+      ctx.beginPath()
+      ctx.arc(handle.x, handle.y, handleSize / 2 + 2, 0, Math.PI * 2)
+      ctx.fillStyle = "#ffffff"
+      ctx.fill()
+      
+      // Blue fill
+      ctx.beginPath()
+      ctx.arc(handle.x, handle.y, handleSize / 2, 0, Math.PI * 2)
+      ctx.fillStyle = "#3b82f6"
+      ctx.fill()
+      
+      // Inner white dot for better visibility
+      ctx.beginPath()
+      ctx.arc(handle.x, handle.y, handleSize / 4, 0, Math.PI * 2)
+      ctx.fillStyle = "#ffffff"
+      ctx.fill()
+    })
+  }
+
+  // Get element bounding box in a consistent format
+  const getElementBounds = (element: DrawnElement, ctx?: CanvasRenderingContext2D): { x: number; y: number; width: number; height: number } | null => {
+    if (element.type === "path") {
       return null
     }
 
-    const handleSize = 16 // Larger hit area for easier grabbing
-    const handles = [
-      { pos: "nw" as const, x: element.x, y: element.y },
-      { pos: "ne" as const, x: element.x + element.width, y: element.y },
-      { pos: "sw" as const, x: element.x, y: element.y + element.height },
-      { pos: "se" as const, x: element.x + element.width, y: element.y + element.height },
+    let elementX = element.x
+    let elementY = element.y
+    let elementWidth = element.width
+    let elementHeight = element.height
+
+    // Special handling for circles (x, y is center, width is diameter)
+    if (element.type === "circle" && elementX !== undefined && elementY !== undefined && elementWidth) {
+      const radius = elementWidth / 2
+      return {
+        x: elementX - radius,
+        y: elementY - radius,
+        width: elementWidth,
+        height: elementWidth,
+      }
+    }
+    // Special handling for sticky notes (default size 180x180)
+    else if (element.type === "sticky") {
+      return {
+        x: elementX || 0,
+        y: elementY || 0,
+        width: elementWidth || 180,
+        height: elementHeight || 180,
+      }
+    }
+    // Special handling for text boxes (calculate width/height if not stored)
+    else if (element.type === "text" && elementX !== undefined && elementY !== undefined && element.text && ctx) {
+      const fontSize = element.fontSize || 18
+      ctx.font = `bold ${fontSize}px Inter`
+      const metrics = ctx.measureText(element.text)
+      const textWidth = element.width || metrics.width
+      const textHeight = element.height || 24
+      // Text boxes are drawn at baseline, but selection box is above
+      return {
+        x: elementX,
+        y: elementY - fontSize,
+        width: textWidth,
+        height: textHeight,
+      }
+    }
+    // Default handling for rectangles and images
+    else if (elementX !== undefined && elementY !== undefined && elementWidth && elementHeight) {
+      return {
+        x: elementX,
+        y: elementY,
+        width: elementWidth,
+        height: elementHeight,
+      }
+    }
+
+    return null
+  }
+
+  const getResizeHandle = (x: number, y: number, element: DrawnElement, ctx?: CanvasRenderingContext2D): "nw" | "ne" | "sw" | "se" | null => {
+    // Support resizing for images, rectangles, circles, sticky notes, and text boxes
+    if (element.type === "path") {
+      return null // Paths cannot be resized
+    }
+
+    const bounds = getElementBounds(element, ctx)
+    if (!bounds) {
+      return null
+    }
+
+    // Use rectangular hit detection instead of circular - much more reliable
+    const handleSize = 32 // Large hit area for easy grabbing
+    const halfHandle = handleSize / 2
+
+    // Define handle regions as rectangles
+    const handles: Array<{ pos: "nw" | "ne" | "sw" | "se"; minX: number; maxX: number; minY: number; maxY: number }> = [
+      {
+        pos: "nw",
+        minX: bounds.x - halfHandle,
+        maxX: bounds.x + halfHandle,
+        minY: bounds.y - halfHandle,
+        maxY: bounds.y + halfHandle,
+      },
+      {
+        pos: "ne",
+        minX: bounds.x + bounds.width - halfHandle,
+        maxX: bounds.x + bounds.width + halfHandle,
+        minY: bounds.y - halfHandle,
+        maxY: bounds.y + halfHandle,
+      },
+      {
+        pos: "sw",
+        minX: bounds.x - halfHandle,
+        maxX: bounds.x + halfHandle,
+        minY: bounds.y + bounds.height - halfHandle,
+        maxY: bounds.y + bounds.height + halfHandle,
+      },
+      {
+        pos: "se",
+        minX: bounds.x + bounds.width - halfHandle,
+        maxX: bounds.x + bounds.width + halfHandle,
+        minY: bounds.y + bounds.height - halfHandle,
+        maxY: bounds.y + bounds.height + halfHandle,
+      },
     ]
 
+    // Check if point is within any handle's rectangular bounds
     for (const handle of handles) {
-      if (Math.hypot(handle.x - x, handle.y - y) < handleSize) {
+      if (x >= handle.minX && x <= handle.maxX && y >= handle.minY && y <= handle.maxY) {
         return handle.pos
       }
     }
@@ -305,6 +434,9 @@ export default function WhiteboardPage() {
           ctx.setLineDash([5, 5])
           ctx.strokeRect(element.x - 3, element.y - 3, element.width + 6, element.height + 6)
           ctx.setLineDash([])
+
+          // Draw resize handles
+          drawResizeHandles(ctx, element.x, element.y, element.width, element.height)
         }
       } else if (element.type === "circle" && element.x && element.y && element.width) {
         ctx.beginPath()
@@ -321,10 +453,15 @@ export default function WhiteboardPage() {
           ctx.setLineDash([5, 5])
           ctx.stroke()
           ctx.setLineDash([])
+
+          // Draw resize handles (using bounding box for circles)
+          const radius = element.width / 2
+          const height = element.width // For circles, height equals width
+          drawResizeHandles(ctx, element.x - radius, element.y - radius, element.width, height)
         }
       } else if (element.type === "sticky" && element.x && element.y && element.text) {
-        const width = 180
-        const height = 180
+        const width = element.width || 180
+        const height = element.height || 180
         ctx.fillStyle = element.color + "dd"
         ctx.fillRect(element.x, element.y, width, height)
         ctx.strokeStyle = element.color
@@ -344,19 +481,28 @@ export default function WhiteboardPage() {
           ctx.setLineDash([5, 5])
           ctx.strokeRect(element.x - 3, element.y - 3, width + 6, height + 6)
           ctx.setLineDash([])
+
+          // Draw resize handles
+          drawResizeHandles(ctx, element.x, element.y, width, height)
         }
       } else if (element.type === "text" && element.x && element.y && element.text) {
         ctx.fillStyle = element.color
-        ctx.font = "bold 18px Inter"
+        const fontSize = element.fontSize || 18
+        ctx.font = `bold ${fontSize}px Inter`
         ctx.fillText(element.text, element.x, element.y)
 
         if (isSelected) {
           const metrics = ctx.measureText(element.text)
+          const textWidth = element.width || metrics.width
+          const textHeight = element.height || 24
           ctx.strokeStyle = "#3b82f6"
           ctx.lineWidth = 2
           ctx.setLineDash([5, 5])
-          ctx.strokeRect(element.x - 3, element.y - 20, metrics.width + 6, 24)
+          ctx.strokeRect(element.x - 3, element.y - fontSize, textWidth + 6, textHeight)
           ctx.setLineDash([])
+
+          // Draw resize handles
+          drawResizeHandles(ctx, element.x, element.y - fontSize, textWidth, textHeight)
         }
       } else if (element.type === "image" && element.x !== undefined && element.y !== undefined && element.width && element.height && element.imageSrc) {
         // Draw image element
@@ -394,24 +540,8 @@ export default function WhiteboardPage() {
           ctx.strokeRect(element.x - 3, element.y - 3, element.width + 6, element.height + 6)
           ctx.setLineDash([])
 
-          // Draw resize handles
-          const handleSize = 10 // Larger visual handles
-          const handles = [
-            { x: element.x, y: element.y }, // NW
-            { x: element.x + element.width, y: element.y }, // NE
-            { x: element.x, y: element.y + element.height }, // SW
-            { x: element.x + element.width, y: element.y + element.height }, // SE
-          ]
-
-          ctx.fillStyle = "#3b82f6"
-          ctx.strokeStyle = "#ffffff"
-          ctx.lineWidth = 2
-          handles.forEach((handle) => {
-            ctx.beginPath()
-            ctx.arc(handle.x, handle.y, handleSize / 2, 0, Math.PI * 2)
-            ctx.fill()
-            ctx.stroke()
-          })
+          // Draw resize handles (use same size as other elements)
+          drawResizeHandles(ctx, element.x, element.y, element.width, element.height)
         }
       }
     })
@@ -540,25 +670,81 @@ export default function WhiteboardPage() {
 
     if (tool === "select") {
       const clickedElement = elements.find((el) => isPointInElement(x, y, el, ctx || undefined))
-      
-      // Check if clicking on resize handle
-      if (clickedElement && clickedElement.type === "image") {
-        const handle = getResizeHandle(x, y, clickedElement)
+
+      // Check if clicking on resize handle (supports all element types except paths)
+      if (clickedElement && clickedElement.type !== "path") {
+        const handle = getResizeHandle(x, y, clickedElement, ctx || undefined)
         if (handle) {
           setResizeHandle(handle)
-          setResizeStart({
-            x: clickedElement.x || 0,
-            y: clickedElement.y || 0,
-            width: clickedElement.width || 0,
-            height: clickedElement.height || 0,
-          })
-          setSelectedElement(clickedElement.id)
-          setIsDrawing(true)
-          return
+          // Use the new getElementBounds function for consistent bounds calculation
+          const bounds = getElementBounds(clickedElement, ctx || undefined)
+          if (bounds) {
+            setResizeStart({
+              x: bounds.x,
+              y: bounds.y,
+              width: bounds.width,
+              height: bounds.height,
+              fontSize: clickedElement.type === "text" ? (clickedElement.fontSize || 18) : undefined,
+              mouseX: x, // Store initial mouse position for accurate delta calculation
+              mouseY: y,
+            })
+            setSelectedElement(clickedElement.id)
+            setIsDrawing(true)
+            return
+          }
         }
       }
 
       if (clickedElement) {
+        // Check for double-click on text or sticky note
+        const now = Date.now()
+        const isDoubleClick = lastClick && 
+          lastClick.elementId === clickedElement.id && 
+          (now - lastClick.time) < 300 // 300ms double-click window
+        
+        if (isDoubleClick && (clickedElement.type === "text" || clickedElement.type === "sticky") && clickedElement.text !== undefined) {
+          // Double-click detected - enter edit mode
+          const canvas = canvasRef.current
+          const ctx = canvas?.getContext("2d")
+          
+          if (clickedElement.type === "text") {
+            // For text boxes, adjust Y position (text is drawn at baseline)
+            const fontSize = clickedElement.fontSize || 18
+            setActiveTextInput({
+              id: clickedElement.id,
+              type: "text",
+              x: clickedElement.x || 0,
+              y: clickedElement.y || 0,
+              width: clickedElement.width || 300,
+              height: clickedElement.height || 24,
+              text: clickedElement.text,
+              color: clickedElement.color,
+            })
+          } else if (clickedElement.type === "sticky") {
+            setActiveTextInput({
+              id: clickedElement.id,
+              type: "sticky",
+              x: clickedElement.x || 0,
+              y: clickedElement.y || 0,
+              width: clickedElement.width || 180,
+              height: clickedElement.height || 180,
+              text: clickedElement.text,
+              color: clickedElement.color,
+            })
+          }
+          
+          // Store the original element for restoration if editing is canceled
+          setEditingElement(clickedElement)
+          // Remove the element from the elements array temporarily while editing
+          const newElements = elements.filter((el) => el.id !== clickedElement.id)
+          setElements(newElements)
+          setSelectedElement(null)
+          setLastClick(null) // Reset double-click tracking
+          return
+        }
+        
+        // Single click - track for potential double-click and proceed with normal selection/dragging
+        setLastClick({ time: now, elementId: clickedElement.id })
         setSelectedElement(clickedElement.id)
         setIsDrawing(true)
         // Calculate offset from element's origin
@@ -573,6 +759,7 @@ export default function WhiteboardPage() {
         }
       } else {
         setSelectedElement(null)
+        setLastClick(null) // Reset double-click tracking when clicking empty space
       }
       return
     }
@@ -628,47 +815,106 @@ export default function WhiteboardPage() {
     const ctx = canvas.getContext("2d")
 
     if (tool === "select" && selectedElement) {
-      // Handle resize
+      // Handle resize with improved logic
       if (resizeHandle && resizeStart) {
         const element = elements.find((el) => el.id === selectedElement)
-        if (element && element.type === "image" && element.originalWidth && element.originalHeight) {
-          const aspectRatio = element.originalWidth / element.originalHeight
+        if (element && element.type !== "path") {
+          // Calculate delta from initial mouse position (more accurate than calculating from handle position)
+          const initialMouseX = resizeStart.mouseX ?? (resizeStart.x + (resizeHandle === "ne" || resizeHandle === "se" ? resizeStart.width : 0))
+          const initialMouseY = resizeStart.mouseY ?? (resizeStart.y + (resizeHandle === "sw" || resizeHandle === "se" ? resizeStart.height : 0))
+          const deltaX = x - initialMouseX
+          const deltaY = y - initialMouseY
+
+          // Determine if we should preserve aspect ratio (images and circles)
+          const preserveAspectRatio = element.type === "image" || element.type === "circle"
+          const aspectRatio = element.type === "circle" 
+            ? 1 
+            : (preserveAspectRatio && element.originalWidth && element.originalHeight
+              ? element.originalWidth / element.originalHeight
+              : 1)
+
+          // Calculate new dimensions based on handle position
           let newWidth = resizeStart.width
           let newHeight = resizeStart.height
           let newX = resizeStart.x
           let newY = resizeStart.y
 
-          if (resizeHandle === "se") {
-            newWidth = x - resizeStart.x
-            newHeight = newWidth / aspectRatio
-          } else if (resizeHandle === "sw") {
-            newWidth = resizeStart.x + resizeStart.width - x
-            newHeight = newWidth / aspectRatio
-            newX = x
-            newY = resizeStart.y + resizeStart.height - newHeight
-          } else if (resizeHandle === "ne") {
-            newWidth = x - resizeStart.x
-            newHeight = newWidth / aspectRatio
-            newY = resizeStart.y + resizeStart.height - newHeight
-          } else if (resizeHandle === "nw") {
-            newWidth = resizeStart.x + resizeStart.width - x
-            newHeight = newWidth / aspectRatio
-            newX = x
-            newY = resizeStart.y + resizeStart.height - newHeight
+          // Calculate width and height changes based on which handle is being dragged
+          switch (resizeHandle) {
+            case "se": // Southeast - bottom-right
+              newWidth = resizeStart.width + deltaX
+              newHeight = preserveAspectRatio ? newWidth / aspectRatio : resizeStart.height + deltaY
+              break
+            case "sw": // Southwest - bottom-left
+              newWidth = resizeStart.width - deltaX
+              newHeight = preserveAspectRatio ? newWidth / aspectRatio : resizeStart.height + deltaY
+              newX = resizeStart.x + deltaX
+              if (preserveAspectRatio) {
+                newY = resizeStart.y + resizeStart.height - newHeight
+              }
+              break
+            case "ne": // Northeast - top-right
+              newWidth = resizeStart.width + deltaX
+              newHeight = preserveAspectRatio ? newWidth / aspectRatio : resizeStart.height - deltaY
+              if (preserveAspectRatio) {
+                newY = resizeStart.y + resizeStart.height - newHeight
+              } else {
+                newY = resizeStart.y + deltaY
+              }
+              break
+            case "nw": // Northwest - top-left
+              newWidth = resizeStart.width - deltaX
+              newHeight = preserveAspectRatio ? newWidth / aspectRatio : resizeStart.height - deltaY
+              newX = resizeStart.x + deltaX
+              if (preserveAspectRatio) {
+                newY = resizeStart.y + resizeStart.height - newHeight
+              } else {
+                newY = resizeStart.y + deltaY
+              }
+              break
           }
 
-          // Minimum size
-          if (newWidth < 50) {
-            newWidth = 50
-            newHeight = 50 / aspectRatio
+          // Ensure minimum size
+          const minSize = 50
+          if (newWidth < minSize) {
+            const widthDiff = minSize - newWidth
+            newWidth = minSize
+            if (preserveAspectRatio) {
+              newHeight = minSize / aspectRatio
+            }
+            // Adjust position to compensate for minimum size
+            if (resizeHandle === "nw" || resizeHandle === "sw") {
+              newX -= widthDiff
+            }
           }
-          if (newHeight < 50) {
-            newHeight = 50
-            newWidth = 50 * aspectRatio
+          if (newHeight < minSize) {
+            const heightDiff = minSize - newHeight
+            newHeight = minSize
+            if (preserveAspectRatio) {
+              newWidth = minSize * aspectRatio
+            }
+            // Adjust position to compensate for minimum size
+            if (resizeHandle === "nw" || resizeHandle === "ne") {
+              newY -= heightDiff
+            }
           }
 
+          // Update element with new dimensions
           const newElements = elements.map((el) => {
             if (el.id === selectedElement) {
+              // For circles, update both center position and radius
+              if (el.type === "circle") {
+                const radius = newWidth / 2
+                return { ...el, x: newX + radius, y: newY + radius, width: newWidth }
+              }
+              // For text boxes, adjust Y position back and scale font size
+              else if (el.type === "text") {
+                // Calculate new font size based on width ratio
+                const widthRatio = resizeStart.width > 0 ? newWidth / resizeStart.width : 1
+                const originalFontSize = resizeStart.fontSize || el.fontSize || 18
+                const newFontSize = Math.max(8, Math.min(72, originalFontSize * widthRatio)) // Clamp between 8px and 72px
+                return { ...el, x: newX, y: newY + newFontSize, width: newWidth, height: newHeight, fontSize: newFontSize }
+              }
               return { ...el, x: newX, y: newY, width: newWidth, height: newHeight }
             }
             return el
@@ -680,8 +926,10 @@ export default function WhiteboardPage() {
 
       // Handle drag
       if (dragOffset) {
-      const newElements = elements.map((el) => {
-        if (el.id !== selectedElement) return el
+        // Reset double-click tracking when dragging starts
+        setLastClick(null)
+        const newElements = elements.map((el) => {
+          if (el.id !== selectedElement) return el
 
         if (el.type === "path" && el.points) {
           const xs = el.points.map((p) => p.x)
@@ -783,6 +1031,7 @@ export default function WhiteboardPage() {
         },
       ])
       setCurrentPath([])
+      // Keep pencil tool active for continuous drawing
     } else if ((tool === "rectangle" || tool === "circle") && previewShape) {
       if (tool === "rectangle") {
         saveToHistory([
@@ -797,6 +1046,7 @@ export default function WhiteboardPage() {
             color: selectedColor,
           },
         ])
+        setTool("select") // Switch back to select tool after adding element
       } else if (tool === "circle") {
         saveToHistory([
           ...elements,
@@ -809,6 +1059,7 @@ export default function WhiteboardPage() {
             color: selectedColor,
           },
         ])
+        setTool("select") // Switch back to select tool after adding element
       }
       setPreviewShape(null)
       setStartPoint(null)
@@ -819,6 +1070,12 @@ export default function WhiteboardPage() {
 
   const handleTextInputComplete = () => {
     if (activeTextInput) {
+      const canvas = canvasRef.current
+      const ctx = canvas?.getContext("2d")
+      
+      // Check if we're editing an existing element or creating a new one
+      const isEditing = !!editingElement
+      
       const newElement: DrawnElement = {
         id: activeTextInput.id,
         type: activeTextInput.type,
@@ -831,15 +1088,44 @@ export default function WhiteboardPage() {
       if (activeTextInput.type === "sticky") {
         newElement.width = activeTextInput.width
         newElement.height = activeTextInput.height
+      } else if (activeTextInput.type === "text") {
+        // For text elements, preserve existing fontSize if editing, otherwise use default
+        const fontSize = isEditing && editingElement?.fontSize ? editingElement.fontSize : 18
+        newElement.fontSize = fontSize
+        
+        if (ctx) {
+          ctx.font = `bold ${fontSize}px Inter`
+          const metrics = ctx.measureText(activeTextInput.text)
+          newElement.width = metrics.width
+          newElement.height = activeTextInput.height || 24
+        } else {
+          // Fallback if context not available
+          newElement.width = activeTextInput.width || 300
+          newElement.height = activeTextInput.height || 24
+        }
       }
 
-      saveToHistory([...elements, newElement])
+      if (isEditing) {
+        // Update existing element (add it back with updated content)
+        saveToHistory([...elements, newElement])
+      } else {
+        // Create new element
+        saveToHistory([...elements, newElement])
+      }
+      
       setActiveTextInput(null)
+      setEditingElement(null) // Clear editing state
+      setTool("select") // Switch back to select tool after adding/editing element
     }
   }
 
   const handleTextInputCancel = () => {
+    // If we were editing, restore the original element
+    if (editingElement) {
+      saveToHistory([...elements, editingElement])
+    }
     setActiveTextInput(null)
+    setEditingElement(null)
   }
 
   // Convert canvas to base64 image
@@ -1760,6 +2046,7 @@ export default function WhiteboardPage() {
         saveToHistory([...elements, newElement])
         setShowUploadModal(false)
         setHasInteracted(true)
+        setTool("select") // Switch back to select tool after adding element
       }
       img.onerror = () => alert("Failed to load image")
       img.src = compressedImageSrc
@@ -1829,6 +2116,7 @@ export default function WhiteboardPage() {
         saveToHistory([...elements, newElement])
         setShowUploadModal(false)
         setHasInteracted(true)
+        setTool("select") // Switch back to select tool after adding element
       }
       img.onerror = () => alert("Failed to load image")
       img.src = compressedImageSrc
@@ -1855,13 +2143,19 @@ export default function WhiteboardPage() {
   }
 
   const clearCanvas = () => {
-    if (confirm("Clear the entire canvas?")) {
+    if (confirm("Clear the entire canvas and reset all data?")) {
       saveToHistory([])
       imageCacheRef.current.clear()
       setSelectedElement(null)
+
+      // Clear all AID8 localStorage items
       localStorage.removeItem("aid8-whiteboard-elements")
       localStorage.removeItem("aid8-whiteboard-history")
       localStorage.removeItem("aid8-whiteboard-history-step")
+      localStorage.removeItem("aid8-whiteboard-has-interacted")
+
+      // Reload page to reset state
+      window.location.reload()
     }
   }
 
