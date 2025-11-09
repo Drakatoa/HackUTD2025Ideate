@@ -105,7 +105,7 @@ export default function LandingPage() {
             <>
               <h2 className="text-6xl md:text-7xl font-serif font-bold text-balance mb-6 leading-tight">
                 Welcome back,{" "}
-                <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent animate-glow-pulse">
+                <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent animate-glow-pulse inline-block">
                   {user.user_metadata?.name || user.email?.split('@')[0]}
                 </span>
               </h2>
@@ -114,7 +114,7 @@ export default function LandingPage() {
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <Link href="/whiteboard">
-                  <Button size="lg" className="text-lg px-8 py-6 animate-glow-pulse">
+                  <Button size="lg" className="text-lg px-8 py-6 animate-button-glow-pulse">
                     <Wand2 className="w-5 h-5 mr-2" />
                     Go to Whiteboard
                   </Button>
@@ -135,11 +135,11 @@ export default function LandingPage() {
             <>
               <h2 className="text-6xl md:text-7xl font-serif font-bold text-balance mb-6 leading-tight">
                 Turn your sketches into{" "}
-                <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent animate-glow-pulse">
+                <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent animate-glow-pulse inline-block">
                   stories
                 </span>
                 , your ideas into{" "}
-                <span className="bg-gradient-to-r from-secondary via-primary to-accent bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-secondary via-primary to-accent bg-clip-text text-transparent animate-glow-pulse inline-block">
                   worlds
                 </span>
               </h2>
@@ -150,7 +150,7 @@ export default function LandingPage() {
               </p>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <Link href="/whiteboard">
-                  <Button size="lg" className="text-lg px-8 py-6 animate-glow-pulse">
+                  <Button size="lg" className="text-lg px-8 py-6 animate-button-glow-pulse">
                     Try the Magic
                   </Button>
                 </Link>
