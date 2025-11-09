@@ -43,9 +43,18 @@ export async function GET() {
       )
     }
 
+    // Debug: Log what env vars we're actually seeing
+    console.log('DEBUG - Environment Variables:',{
+      NEMOTRON_MODEL_ID: process.env.NEMOTRON_MODEL_ID,
+      NEMOTRON_TEXT_MODEL_ID: process.env.NEMOTRON_TEXT_MODEL_ID,
+      NEMOTRON_VISION_MODEL_ID: process.env.NEMOTRON_VISION_MODEL_ID,
+      getTextModelId: getTextModelId(),
+      getVisionModelId: getVisionModelId(),
+    })
+
     // Create client and test connection
     const client = createNemotronClient()
-    
+
     console.log('Testing Nemotron connection...')
     const response = await client.generate('Say hello in one sentence!', {
       maxTokens: 50,

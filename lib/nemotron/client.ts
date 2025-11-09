@@ -185,7 +185,10 @@ export class NemotronClient {
         throw new Error('No response from Nemotron API')
       }
 
-      return response.data.choices[0].message.content
+      // Nemotron Nano 9B v2 returns reasoning_content instead of content
+      // Handle both formats
+      const message = response.data.choices[0].message
+      return message.content || message.reasoning_content || ''
     } catch (error) {
       if (axios.isAxiosError(error)) {
         const axiosError = error as AxiosError<NemotronError>
@@ -289,10 +292,10 @@ export function createNemotronClient(): NemotronClient {
   
   // Support dual model setup: vision model for images, text model for generation
   // Falls back to single model if only NEMOTRON_MODEL_ID is set
-  const modelId = 
-    process.env.NEMOTRON_TEXT_MODEL_ID || 
-    process.env.NEMOTRON_MODEL_ID || 
-    'nvidia/nemotron-4-340b-instruct'
+  const modelId =
+    process.env.NEMOTRON_TEXT_MODEL_ID ||
+    process.env.NEMOTRON_MODEL_ID ||
+    'nvidia/nvidia-nemotron-nano-9b-v2'  // Updated default to working model
   
   const maxRetries = process.env.NEMOTRON_MAX_RETRIES
     ? parseInt(process.env.NEMOTRON_MAX_RETRIES)
@@ -324,7 +327,7 @@ export function getVisionModelId(): string {
   return (
     process.env.NEMOTRON_VISION_MODEL_ID ||
     process.env.NEMOTRON_MODEL_ID ||
-    'nvidia/nemotron-nano-v2-12b-vl'
+    'meta/llama-3.2-11b-vision-instruct'  // Vision-capable model with multimodal support
   )
 }
 
@@ -336,7 +339,7 @@ export function getTextModelId(): string {
   return (
     process.env.NEMOTRON_TEXT_MODEL_ID ||
     process.env.NEMOTRON_MODEL_ID ||
-    'nvidia/nemotron-4-340b-instruct'
+    'nvidia/nvidia-nemotron-nano-9b-v2'  // Updated default to working model
   )
 }
 

@@ -39,7 +39,8 @@ export interface NemotronResponse {
     index: number
     message: {
       role: string
-      content: string
+      content?: string
+      reasoning_content?: string  // Nemotron Nano 9B v2 uses this field
     }
     finish_reason: string
   }>
@@ -60,10 +61,13 @@ export interface NemotronError {
 
 export interface AnalysisResult {
   components: string[]
-  userFlow?: string
+  userFlow: string
   features: string[]
-  suggestions: string[]
-  raw: string
+  productType: string
+  targetAudience: string
+  technicalNotes: string[]
+  summary: string
+  rawAnalysis?: string  // Full AI response if JSON parsing fails
 }
 
 export interface DiagramGenerationResult {
