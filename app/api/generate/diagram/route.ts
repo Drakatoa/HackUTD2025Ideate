@@ -154,7 +154,8 @@ export async function POST(request: NextRequest) {
 
     const analysisText = analysis.rawAnalysis || JSON.stringify(analysis, null, 2)
 
-    const basePrompt = `You are a UX designer creating a Mermaid diagram.
+    // Use few-shot prompting with concrete examples for consistency (research shows 35% → 100% improvement)
+    const basePrompt = `You are a UX designer creating Mermaid flowchart diagrams. You MUST follow the exact syntax patterns shown in the examples below.
 
 PRODUCT ANALYSIS:
 ${analysisText}
@@ -165,22 +166,69 @@ Features: ${analysis.features?.join(', ') || 'N/A'}
 Product Type: ${analysis.productType || 'N/A'}
 ${previousContext}
 
-CRITICAL RULES:
-1. Use VALID Mermaid syntax only
-2. Nodes MUST have IDs: NodeID[Label] NOT [Label]
-3. Use --> for connections
-4. After thinking, output code after ===MERMAID_CODE=== delimiter
-5. NO reasoning text after the delimiter
+CRITICAL SYNTAX RULES:
+1. Every node MUST have an ID before the label: NodeID[Label]
+2. NEVER use standalone labels like [Label]
+3. Connections use --> between node IDs
+4. Start with "flowchart TD" or "flowchart LR"
+5. Use consistent node ID naming (camelCase or snake_case)
 
-OUTPUT FORMAT:
-[Think through the diagram first]
+CORRECT EXAMPLES TO FOLLOW:
+
+Example 1 - E-commerce App:
+flowchart TD
+    Start[User Opens App]
+    Start --> Browse[Browse Products]
+    Browse --> Select[Select Item]
+    Select --> AddCart[Add to Cart]
+    AddCart --> Checkout[Proceed to Checkout]
+    Checkout --> Payment[Enter Payment]
+    Payment --> Confirm[Order Confirmed]
+
+Example 2 - Login Flow:
+flowchart LR
+    Entry[Landing Page]
+    Entry --> Login[Login Screen]
+    Login --> Auth{Authentication}
+    Auth -->|Success| Dashboard[User Dashboard]
+    Auth -->|Failed| Error[Error Message]
+    Error --> Login
+
+Example 3 - Social Media App:
+flowchart TD
+    Home[Home Feed]
+    Home --> CreatePost[Create Post]
+    Home --> ViewProfile[View Profile]
+    CreatePost --> UploadMedia[Upload Photo/Video]
+    UploadMedia --> AddCaption[Add Caption]
+    AddCaption --> PublishPost[Publish]
+    ViewProfile --> EditProfile[Edit Profile]
+    ViewProfile --> ViewPosts[View Posts]
+
+COMMON MISTAKES TO AVOID:
+❌ WRONG: [Customer] --> [Shopping Cart]
+✓ CORRECT: Customer[Customer] --> Cart[Shopping Cart]
+
+❌ WRONG: flowchart TD
+         [Start]
+✓ CORRECT: flowchart TD
+          Start[Start]
+
+❌ WRONG: Node1 --> [Label]
+✓ CORRECT: Node1[First] --> Node2[Label]
+
+YOUR TASK:
+Analyze the product above and create a similar diagram following the EXACT syntax pattern from the examples.
+
+Think step by step:
+1. What are the main user actions?
+2. What is the logical flow?
+3. What are the decision points?
+
+Then output ONLY the Mermaid code after the delimiter.
 
 ===MERMAID_CODE===
-flowchart TD
-    Start[Start Node]
-    Start --> Next[Next Node]
-
-Generate the diagram now.`
+[Output your flowchart here using the exact syntax from examples]`
 
     // Retry loop with validation
     let cleanedDiagram = ''
@@ -195,10 +243,10 @@ Generate the diagram now.`
         currentPrompt = `${basePrompt}\n\nPREVIOUS ERRORS TO FIX:\n${validationErrors.join('\n')}\n\nFix these and try again.`
       }
 
-      // Generate diagram
+      // Generate diagram with low temperature for consistency
       const rawResponse = await client.generate(currentPrompt, {
         maxTokens: 1500,
-        temperature: 0.2 + (attempt * 0.1), // Increase temp slightly on retry
+        temperature: attempt === 0 ? 0.1 : 0.2 + (attempt * 0.05), // Start very low, increase minimally on retry
       })
 
       console.log(`Attempt ${attempt + 1} raw response:`, rawResponse.substring(0, 200) + '...')

@@ -897,7 +897,12 @@ export default function WhiteboardPage() {
 
     if (diagramToRender?.mermaid && mermaidRef.current) {
       console.log("Rendering Mermaid diagram:", diagramToRender.mermaid.substring(0, 200))
-      renderMermaidDiagram(mermaidRef.current, diagramToRender.mermaid, `mermaid-${Date.now()}`)
+      // Small delay to ensure DOM is ready and avoid race conditions
+      setTimeout(() => {
+        if (mermaidRef.current) {
+          renderMermaidDiagram(mermaidRef.current, diagramToRender.mermaid, `mermaid-${Date.now()}`)
+        }
+      }, 50)
     }
   }, [diagram, diagramIterations, currentDiagramIndex])
 
@@ -943,6 +948,523 @@ export default function WhiteboardPage() {
       }
     })
   }, [diagramIterations])
+
+  const handleExportCanvas = () => {
+    // Get canvas as image
+    const canvasImage = canvasToBase64()
+
+    // Get current diagram (latest iteration)
+    const currentDiagram = diagramIterations[currentDiagramIndex] || diagram
+
+    // Create HTML document
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AID8 Product Export - ${new Date().toLocaleDateString()}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #1e293b;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 3rem 2rem;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      font-family: Georgia, serif;
+    }
+
+    .header p {
+      font-size: 1.1rem;
+      opacity: 0.95;
+    }
+
+    .content {
+      padding: 3rem 2rem;
+    }
+
+    .section {
+      margin-bottom: 3rem;
+      page-break-inside: avoid;
+    }
+
+    .section-title {
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      color: #667eea;
+      border-left: 4px solid #667eea;
+      padding-left: 1rem;
+      font-family: Georgia, serif;
+    }
+
+    .canvas-preview {
+      width: 100%;
+      max-width: 800px;
+      margin: 1.5rem auto;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+      display: block;
+      border: 1px solid #e2e8f0;
+    }
+
+    .diagram-container {
+      background: #f8fafc;
+      padding: 2rem;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      margin: 1.5rem 0;
+    }
+
+    .pitch-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin: 1.5rem 0;
+    }
+
+    .pitch-card {
+      background: #f8fafc;
+      padding: 1.5rem;
+      border-radius: 12px;
+      border-left: 4px solid #667eea;
+    }
+
+    .pitch-card h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #667eea;
+      margin-bottom: 0.75rem;
+    }
+
+    .pitch-card p, .pitch-card ul {
+      color: #475569;
+      font-size: 0.95rem;
+    }
+
+    .pitch-card ul {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .pitch-card li {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .pitch-card li:last-child {
+      border-bottom: none;
+    }
+
+    .pitch-card li::before {
+      content: "✓";
+      color: #667eea;
+      font-weight: bold;
+      margin-right: 0.5rem;
+    }
+
+    .value-prop {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 2rem;
+      border-radius: 12px;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 2rem 0;
+      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+      font-family: Georgia, serif;
+    }
+
+    .competitors {
+      display: grid;
+      gap: 1.5rem;
+      margin: 1.5rem 0;
+    }
+
+    .competitor-card {
+      background: #f8fafc;
+      padding: 1.5rem;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+    }
+
+    .competitor-card h4 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #1e293b;
+      margin-bottom: 0.5rem;
+    }
+
+    .competitor-card p {
+      color: #64748b;
+      margin-bottom: 1rem;
+    }
+
+    .competitor-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .competitor-list {
+      list-style: none;
+      padding: 0;
+    }
+
+    .competitor-list li {
+      padding: 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .strengths li {
+      color: #059669;
+    }
+
+    .weaknesses li {
+      color: #dc2626;
+    }
+
+    .competitor-list li::before {
+      margin-right: 0.5rem;
+      font-weight: bold;
+    }
+
+    .strengths li::before {
+      content: "+";
+      color: #059669;
+    }
+
+    .weaknesses li::before {
+      content: "−";
+      color: #dc2626;
+    }
+
+    .roadmap-phases {
+      display: grid;
+      gap: 2rem;
+      margin: 1.5rem 0;
+    }
+
+    .phase {
+      background: #f8fafc;
+      padding: 1.5rem;
+      border-radius: 12px;
+      border-left: 4px solid #667eea;
+    }
+
+    .phase h4 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #667eea;
+      margin-bottom: 1rem;
+    }
+
+    .milestones {
+      list-style: none;
+      padding: 0;
+    }
+
+    .milestones li {
+      padding: 0.75rem 0;
+      border-bottom: 1px solid #e2e8f0;
+      color: #475569;
+    }
+
+    .milestones li:last-child {
+      border-bottom: none;
+    }
+
+    .milestones li::before {
+      content: "◆";
+      color: #667eea;
+      margin-right: 0.75rem;
+    }
+
+    .footer {
+      background: #f8fafc;
+      padding: 2rem;
+      text-align: center;
+      color: #64748b;
+      font-size: 0.9rem;
+      border-top: 1px solid #e2e8f0;
+    }
+
+    .timestamp {
+      color: #94a3b8;
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+    }
+
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+
+      .container {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎨 Product Ideation Report</h1>
+      <p>AI-Powered Product Analysis & Strategy</p>
+    </div>
+
+    <div class="content">
+      ${canvasImage ? `
+      <div class="section">
+        <h2 class="section-title">Canvas Sketch</h2>
+        <img src="${canvasImage}" alt="Canvas Sketch" class="canvas-preview" />
+      </div>
+      ` : ''}
+
+      ${currentDiagram ? `
+      <div class="section">
+        <h2 class="section-title">Product Diagram</h2>
+        <div class="diagram-container">
+          <div id="diagram-output"></div>
+        </div>
+      </div>
+      ` : ''}
+
+      ${pitch ? `
+      <div class="section">
+        <h2 class="section-title">Investor Pitch</h2>
+
+        ${pitch.valueProposition ? `
+        <div class="value-prop">
+          "${pitch.valueProposition}"
+        </div>
+        ` : ''}
+
+        <div class="pitch-grid">
+          ${pitch.problem ? `
+          <div class="pitch-card">
+            <h3>🔥 Problem</h3>
+            <p>${pitch.problem}</p>
+          </div>
+          ` : ''}
+
+          ${pitch.solution ? `
+          <div class="pitch-card">
+            <h3>💡 Solution</h3>
+            <p>${pitch.solution}</p>
+          </div>
+          ` : ''}
+
+          ${pitch.targetAudience ? `
+          <div class="pitch-card">
+            <h3>🎯 Target Audience</h3>
+            <p>${pitch.targetAudience}</p>
+          </div>
+          ` : ''}
+
+          ${pitch.traction ? `
+          <div class="pitch-card">
+            <h3>📈 Traction</h3>
+            <p>${pitch.traction}</p>
+          </div>
+          ` : ''}
+        </div>
+
+        ${pitch.differentiators && pitch.differentiators.length > 0 ? `
+        <div class="pitch-card" style="margin-top: 2rem;">
+          <h3>✨ Key Differentiators</h3>
+          <ul>
+            ${pitch.differentiators.map((diff: string) => `<li>${diff}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+      </div>
+      ` : ''}
+
+      ${competitive ? `
+      <div class="section">
+        <h2 class="section-title">Competitive Analysis</h2>
+
+        ${competitive.marketOpportunity ? `
+        <div class="pitch-card" style="margin-bottom: 2rem;">
+          <h3>🎯 Market Opportunity</h3>
+          <p>${competitive.marketOpportunity}</p>
+        </div>
+        ` : ''}
+
+        ${competitive.positioning ? `
+        <div class="pitch-card" style="margin-bottom: 2rem;">
+          <h3>🎪 Positioning</h3>
+          <p>${competitive.positioning}</p>
+        </div>
+        ` : ''}
+
+        ${competitive.competitors && competitive.competitors.length > 0 ? `
+        <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: #475569;">Competitors</h3>
+        <div class="competitors">
+          ${competitive.competitors.map((comp: any) => `
+            <div class="competitor-card">
+              <h4>${comp.name}</h4>
+              <p>${comp.description || ''}</p>
+              <div class="competitor-grid">
+                ${comp.strengths && comp.strengths.length > 0 ? `
+                <div>
+                  <strong style="color: #059669;">Strengths</strong>
+                  <ul class="competitor-list strengths">
+                    ${comp.strengths.map((s: string) => `<li>${s}</li>`).join('')}
+                  </ul>
+                </div>
+                ` : ''}
+                ${comp.weaknesses && comp.weaknesses.length > 0 ? `
+                <div>
+                  <strong style="color: #dc2626;">Weaknesses</strong>
+                  <ul class="competitor-list weaknesses">
+                    ${comp.weaknesses.map((w: string) => `<li>${w}</li>`).join('')}
+                  </ul>
+                </div>
+                ` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        ` : ''}
+
+        ${competitive.differentiators && competitive.differentiators.length > 0 ? `
+        <div class="pitch-card" style="margin-top: 2rem;">
+          <h3>🚀 Our Differentiators</h3>
+          <ul>
+            ${competitive.differentiators.map((diff: string) => `<li>${diff}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+      </div>
+      ` : ''}
+
+      ${roadmap && roadmap.phases ? `
+      <div class="section">
+        <h2 class="section-title">90-Day Roadmap</h2>
+
+        ${roadmap.vision ? `
+        <div class="pitch-card" style="margin-bottom: 2rem;">
+          <h3>🎯 Vision</h3>
+          <p>${roadmap.vision}</p>
+        </div>
+        ` : ''}
+
+        <div class="roadmap-phases">
+          ${roadmap.phases.map((phase: any) => `
+            <div class="phase">
+              <h4>${phase.name || phase.phase || 'Phase'} (${phase.duration || phase.timeline || '30 days'})</h4>
+              ${phase.focus ? `<p style="color: #64748b; margin-bottom: 1rem;">${phase.focus}</p>` : ''}
+              ${phase.milestones && phase.milestones.length > 0 ? `
+              <ul class="milestones">
+                ${phase.milestones.map((milestone: string) => `<li>${milestone}</li>`).join('')}
+              </ul>
+              ` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      ${analysis ? `
+      <div class="section">
+        <h2 class="section-title">Product Analysis Summary</h2>
+        <div class="pitch-card">
+          ${analysis.summary ? `<p style="margin-bottom: 1rem;"><strong>Summary:</strong> ${analysis.summary}</p>` : ''}
+          ${analysis.productType ? `<p style="margin-bottom: 0.5rem;"><strong>Product Type:</strong> ${analysis.productType}</p>` : ''}
+          ${analysis.targetAudience ? `<p style="margin-bottom: 0.5rem;"><strong>Target Audience:</strong> ${analysis.targetAudience}</p>` : ''}
+          ${analysis.components && analysis.components.length > 0 ? `
+          <p style="margin-top: 1rem;"><strong>Components:</strong></p>
+          <ul>
+            ${analysis.components.map((comp: string) => `<li>${comp}</li>`).join('')}
+          </ul>
+          ` : ''}
+          ${analysis.features && analysis.features.length > 0 ? `
+          <p style="margin-top: 1rem;"><strong>Features:</strong></p>
+          <ul>
+            ${analysis.features.map((feat: string) => `<li>${feat}</li>`).join('')}
+          </ul>
+          ` : ''}
+        </div>
+      </div>
+      ` : ''}
+    </div>
+
+    <div class="footer">
+      <p><strong>Generated by AID8</strong> - AI-Powered Product Ideation Platform</p>
+      <p class="timestamp">${new Date().toLocaleString()}</p>
+    </div>
+  </div>
+
+  ${currentDiagram ? `
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'default',
+      securityLevel: 'loose'
+    });
+
+    const diagramCode = ${JSON.stringify(currentDiagram.mermaid)};
+    const container = document.getElementById('diagram-output');
+
+    if (container) {
+      const pre = document.createElement('pre');
+      pre.className = 'mermaid';
+      pre.textContent = diagramCode;
+      container.appendChild(pre);
+
+      mermaid.run({ nodes: [pre] }).catch(err => {
+        console.error('Mermaid error:', err);
+        container.innerHTML = '<p style="color: #dc2626;">Diagram rendering error</p>';
+      });
+    }
+  </script>
+  ` : ''}
+</body>
+</html>`
+
+    // Create blob and download
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `AID8-Product-Export-${new Date().toISOString().split('T')[0]}.html`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   const handleGenerateAI = async () => {
     if (isGenerating) return
@@ -1085,7 +1607,7 @@ export default function WhiteboardPage() {
   }
 
   const expandDiagram = async () => {
-    if (!diagram || !analysis || isExpandingDiagram) return
+    if (!diagram || !analysis || isExpandingDiagram || !description.trim()) return
 
     setIsExpandingDiagram(true)
     try {
@@ -1094,11 +1616,17 @@ export default function WhiteboardPage() {
         ? diagramIterations[currentDiagramIndex]
         : diagram
 
+      // Update analysis with the new description context
+      const expandedAnalysis = {
+        ...analysis,
+        rawAnalysis: `${analysis.rawAnalysis}\n\nADDITIONAL CONTEXT FOR EXPANSION:\n${description.trim()}`
+      }
+
       const diagramResponse = await fetch("/api/generate/diagram", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          analysis: analysis,
+          analysis: expandedAnalysis,
           previousDiagram: currentDiagram,
         }),
       })
@@ -1681,7 +2209,7 @@ export default function WhiteboardPage() {
                 <Wand2 className="w-5 h-5 text-primary animate-sparkle" />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-medium text-foreground">Additional Context (Optional)</label>
+                <label className="text-xs font-medium text-foreground">Additional Context</label>
                 <textarea
                   className="w-full min-h-[80px] p-3 text-sm bg-background/50 border border-border/50 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
                   placeholder="Add any additional context about your idea... (e.g., target users, key features, market insights)"
@@ -1689,7 +2217,7 @@ export default function WhiteboardPage() {
                   onChange={(e) => setDescription(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Edit this to refine your idea, then regenerate to see updated results.
+                  {diagram ? "Add context here to expand the diagram with more detail." : "Edit this to refine your idea, then regenerate to see updated results."}
                 </p>
               </div>
             </div>
@@ -1753,8 +2281,8 @@ export default function WhiteboardPage() {
                       size="sm"
                       className="w-full"
                       onClick={expandDiagram}
-                      disabled={isExpandingDiagram || !diagram}
-                      title="Expand diagram with more detail"
+                      disabled={isExpandingDiagram || !diagram || !description.trim()}
+                      title={!description.trim() ? "Add context above to expand diagram" : "Expand diagram with more detail"}
                     >
                       {isExpandingDiagram ? (
                         <>
@@ -2084,7 +2612,12 @@ export default function WhiteboardPage() {
               </div>
             )}
 
-            <Button variant="outline" className="w-full border-secondary/30 bg-transparent">
+            <Button
+              variant="outline"
+              className="w-full border-secondary/30 bg-transparent"
+              onClick={handleExportCanvas}
+              disabled={!analysis && !diagram && !pitch && !competitive && !roadmap}
+            >
               <Download className="w-4 h-4 mr-2" />
               Export Canvas
             </Button>
